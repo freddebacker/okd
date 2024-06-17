@@ -3,67 +3,85 @@ resource "openstack_compute_keypair_v2" "k8s" {
   public_key = chomp(file(var.public_key_path))
 }
 
-resource "openstack_compute_secgroup_v2" "k8s_master" {
+resource "openstack_networking_secgroup_v2" "k8s_master" {
   name        = "${var.cluster_name}-master"
   description = "${var.cluster_name} - Kubernetes Master"
-
-  rule {
-    ip_protocol = "tcp"
-    from_port   = "6443"
-    to_port     = "6443"
-    cidr        = "0.0.0.0/0"
-  }
 }
 
-resource "openstack_compute_secgroup_v2" "lb_in" {
+resource "openstack_networking_secgroup_rule_v2" "k8s_master-rule1" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s_master.id
+  protocol          = "tcp"
+  port_range_min    = 6443
+  port_range_max    = 6443
+  remote_ip_prefix  = "0.0.0.0/0"
+}
+
+resource "openstack_networking_secgroup_v2" "lb_in" {
   name        = "${var.cluster_name}-lb-in"
   description = "${var.cluster_name} - Load balancer ingress"
-
-  rule {
-    ip_protocol = "tcp"
-    from_port   = "80"
-    to_port     = "80"
-    cidr        = "0.0.0.0/0"
-  }
-  rule {
-    ip_protocol = "tcp"
-    from_port   = "443"
-    to_port     = "443"
-    cidr        = "0.0.0.0/0"
-  }
 }
 
-resource "openstack_compute_secgroup_v2" "k8s" {
+resource "openstack_networking_secgroup_rule_v2" "lb_in-rule1" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.lb_in.id
+  protocol          = "tcp"
+  port_range_min    = 80
+  port_range_max    = 80
+  remote_ip_prefix  = "0.0.0.0/0"
+}
+
+resource "openstack_networking_secgroup_rule_v2" "lb_in-rule2" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.lb_in.id
+  protocol          = "tcp"
+  port_range_min    = 443
+  port_range_max    = 443
+  remote_ip_prefix  = "0.0.0.0/0"
+}
+
+resource "openstack_networking_secgroup_v2" "k8s" {
   name        = "${var.cluster_name}-inter-cluster"
   description = "${var.cluster_name} - Kubernetes"
+}
 
-  rule {
-    ip_protocol = "icmp"
-    from_port   = "-1"
-    to_port     = "-1"
-    cidr        = "0.0.0.0/0"
-  }
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule1" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "icmp"
+  remote_ip_prefix  = "0.0.0.0/0"
+}
 
-  rule {
-    ip_protocol = "tcp"
-    from_port   = "1"
-    to_port     = "65535"
-    self        = true
-  }
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule2" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "tcp"
+  port_range_min    = 0
+  port_range_max    = 0
+  remote_group_id   = openstack_networking_secgroup_v2.k8s.id
+}
 
-  rule {
-    ip_protocol = "udp"
-    from_port   = "1"
-    to_port     = "65535"
-    self        = true
-  }
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule3" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "udp"
+  port_range_min    = 0
+  port_range_max    = 0
+  remote_group_id   = openstack_networking_secgroup_v2.k8s.id
+}
 
-  rule {
-    ip_protocol = "icmp"
-    from_port   = "-1"
-    to_port     = "-1"
-    self        = true
-  }
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule4" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "icmp"
+  remote_group_id   = openstack_networking_secgroup_v2.k8s.id
 }
 
 resource "openstack_networking_secgroup_v2" "ssh" {
@@ -96,9 +114,9 @@ resource "openstack_compute_instance_v2" "k8s_lb" {
     role             = "lb"
   }
 
-  security_groups = [openstack_compute_secgroup_v2.k8s_master.name,
-    openstack_compute_secgroup_v2.k8s.name,
-    openstack_compute_secgroup_v2.lb_in.name,
+  security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
+    openstack_networking_secgroup_v2.k8s.name,
+    openstack_networking_secgroup_v2.lb_in.name,
     openstack_networking_secgroup_v2.ssh.name,
     "default",
   ]
@@ -122,8 +140,8 @@ resource "openstack_compute_instance_v2" "k8s_boot" {
     name = var.network_name
   }
   user_data = file("${var.boot_ignition}")
-  security_groups = [openstack_compute_secgroup_v2.k8s_master.name,
-    openstack_compute_secgroup_v2.k8s.name,
+  security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
+    openstack_networking_secgroup_v2.k8s.name,
     openstack_networking_secgroup_v2.ssh.name,
     "default",
   ]
@@ -152,8 +170,8 @@ resource "openstack_compute_instance_v2" "k8s_master" {
     name = var.network_name
   }
 
-  security_groups = [openstack_compute_secgroup_v2.k8s_master.name,
-    openstack_compute_secgroup_v2.k8s.name,
+  security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
+    openstack_networking_secgroup_v2.k8s.name,
     openstack_networking_secgroup_v2.ssh.name,
     "default",
   ]
@@ -222,7 +240,7 @@ resource "openstack_compute_instance_v2" "k8s_worker" {
     name = var.network_name
   }
 
-  security_groups = [openstack_compute_secgroup_v2.k8s.name,
+  security_groups = [openstack_networking_secgroup_v2.k8s.name,
     openstack_networking_secgroup_v2.ssh.name,
     "default",
   ]
