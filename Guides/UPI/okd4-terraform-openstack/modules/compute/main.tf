@@ -102,6 +102,7 @@ resource "openstack_networking_secgroup_rule_v2" "ssh-cidr" {
 
 
 resource "openstack_compute_instance_v2" "k8s_lb" {
+  count      = var.use_octavia ? 0 : 1
   name       = "lb-${var.cluster_name}.${var.domain_name}"
   image_name = var.image_lb
   flavor_id  = var.flavor_lb
@@ -129,7 +130,7 @@ resource "openstack_dns_recordset_v2" "lb_instance" {
   description = "lb dns record"
   ttl         = 300
   type        = "A"
-  records     = [openstack_compute_instance_v2.k8s_lb.access_ip_v4]
+  records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
 resource "openstack_compute_instance_v2" "k8s_boot" {
   name       = "boot-${var.cluster_name}.${var.domain_name}"
@@ -198,7 +199,7 @@ resource "openstack_dns_recordset_v2" "master_api" {
   description = "Master api record "
   ttl         = 300
   type        = "A"
-  records     = [openstack_compute_instance_v2.k8s_lb.access_ip_v4]
+  records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
 
 resource "openstack_dns_recordset_v2" "master_api_int" {
@@ -207,7 +208,7 @@ resource "openstack_dns_recordset_v2" "master_api_int" {
   description = "Internal master api record "
   ttl         = 300
   type        = "A"
-  records     = [openstack_compute_instance_v2.k8s_lb.access_ip_v4]
+  records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
 
 resource "openstack_dns_recordset_v2" "etcd_instances" {
@@ -267,6 +268,163 @@ resource "openstack_dns_recordset_v2" "apps" {
   description = "apps record (DNS-RR)"
   ttl         = 300
   type        = "A"
-  records     = [openstack_compute_instance_v2.k8s_lb.access_ip_v4]
+  records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
 
+data "openstack_networking_network_v2" "lb_network" {
+  count = var.use_octavia ? 1 : 0
+  name  = var.network_name
+}
+
+resource "openstack_lb_loadbalancer_v2" "lb_1" {
+  count              = var.use_octavia ? 1 : 0
+  vip_network_id     = data.openstack_networking_network_v2.lb_network[0].id
+  security_group_ids = [openstack_networking_secgroup_v2.lb_in.id]
+}
+
+resource "openstack_lb_pool_v2" "pool_1" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  lb_method       = "ROUND_ROBIN"
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+}
+
+resource "openstack_lb_member_v2" "pool_1_members_1" {
+  count         = var.use_octavia ? var.number_of_masters : 0
+  pool_id       = openstack_lb_pool_v2.pool_1[0].id
+  address       = element(openstack_compute_instance_v2.k8s_master.*.access_ip_v4,count.index)
+  protocol_port = 6443
+}
+
+resource "openstack_lb_member_v2" "pool_1_members_2" {
+  count         = var.use_octavia ? var.number_of_boot : 0
+  pool_id       = openstack_lb_pool_v2.pool_1[0].id
+  address       = element(openstack_compute_instance_v2.k8s_boot.*.access_ip_v4,count.index)
+  protocol_port = 6443
+}
+
+resource "openstack_lb_monitor_v2" "monitor_1" {
+  count       = var.use_octavia ? 1 : 0
+  pool_id     = openstack_lb_pool_v2.pool_1[0].id
+  type        = "HTTPS"
+  url_path    = "/readyz"
+  delay       = 10
+  timeout     = 9
+  max_retries = 3
+}
+
+resource "openstack_lb_listener_v2" "listener_1" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  protocol_port   = 6443
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+  default_pool_id = openstack_lb_pool_v2.pool_1[0].id
+}
+
+resource "openstack_lb_pool_v2" "pool_2" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  lb_method       = "ROUND_ROBIN"
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+}
+
+resource "openstack_lb_member_v2" "pool_2_members_1" {
+  count         = var.use_octavia ? var.number_of_masters : 0
+  pool_id       = openstack_lb_pool_v2.pool_2[0].id
+  address       = element(openstack_compute_instance_v2.k8s_master.*.access_ip_v4,count.index)
+  protocol_port = 22623
+}
+
+resource "openstack_lb_member_v2" "pool_2_members_2" {
+  count         = var.use_octavia ? var.number_of_boot : 0
+  pool_id       = openstack_lb_pool_v2.pool_2[0].id
+  address       = element(openstack_compute_instance_v2.k8s_boot.*.access_ip_v4,count.index)
+  protocol_port = 22623
+}
+
+resource "openstack_lb_monitor_v2" "monitor_2" {
+  count       = var.use_octavia ? 1 : 0
+  pool_id     = openstack_lb_pool_v2.pool_2[0].id
+  type        = "TCP"
+  delay       = 10
+  timeout     = 9
+  max_retries = 3
+}
+
+resource "openstack_lb_listener_v2" "listener_2" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  protocol_port   = 22623
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+  default_pool_id = openstack_lb_pool_v2.pool_2[0].id
+}
+
+resource "openstack_lb_pool_v2" "pool_3" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  lb_method       = "SOURCE_IP"
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+
+  persistence {
+    type        = "SOURCE_IP"
+  }
+}
+
+resource "openstack_lb_member_v2" "pool_3_members_1" {
+  count         = var.use_octavia ? var.number_of_workers : 0
+  pool_id       = openstack_lb_pool_v2.pool_3[0].id
+  address       = element(openstack_compute_instance_v2.k8s_worker.*.access_ip_v4,count.index)
+  protocol_port = 80
+}
+
+resource "openstack_lb_monitor_v2" "monitor_3" {
+  count       = var.use_octavia ? 1 : 0
+  pool_id     = openstack_lb_pool_v2.pool_3[0].id
+  type        = "TCP"
+  delay       = 10
+  timeout     = 9
+  max_retries = 3
+}
+
+resource "openstack_lb_listener_v2" "listener_3" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  protocol_port   = 80
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+  default_pool_id = openstack_lb_pool_v2.pool_3[0].id
+}
+
+resource "openstack_lb_pool_v2" "pool_4" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  lb_method       = "SOURCE_IP"
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+
+  persistence {
+    type        = "SOURCE_IP"
+  }
+}
+
+resource "openstack_lb_member_v2" "pool_4_members_1" {
+  count         = var.use_octavia ? var.number_of_workers : 0
+  pool_id       = openstack_lb_pool_v2.pool_4[0].id
+  address       = element(openstack_compute_instance_v2.k8s_worker.*.access_ip_v4,count.index)
+  protocol_port = 443
+}
+
+resource "openstack_lb_monitor_v2" "monitor_4" {
+  count       = var.use_octavia ? 1 : 0
+  pool_id     = openstack_lb_pool_v2.pool_4[0].id
+  type        = "TCP"
+  delay       = 10
+  timeout     = 9
+  max_retries = 3
+}
+
+resource "openstack_lb_listener_v2" "listener_4" {
+  count           = var.use_octavia ? 1 : 0
+  protocol        = "TCP"
+  protocol_port   = 443
+  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[0].id
+  default_pool_id = openstack_lb_pool_v2.pool_4[0].id
+}

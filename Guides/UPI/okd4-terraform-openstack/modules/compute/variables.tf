@@ -40,3 +40,8 @@ variable "allow_ssh_from_v4" {
   type = list(string)
   default = []
 }
+
+variable "use_octavia" {
+  type = bool
+  default = false
+}

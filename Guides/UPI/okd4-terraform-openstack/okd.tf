@@ -21,5 +21,6 @@ module "compute" {
   network_name                                 = "${var.network_name}"
   allow_ssh_from_v4                            = "${var.allow_ssh_from_v4}"
   domain_name                                  = "${var.domain_name}"
+  use_octavia                                  = var.use_octavia
 }
 
