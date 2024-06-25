@@ -2,7 +2,7 @@
 module "compute" {
   source = "./modules/compute"
   cluster_name                                 = "${var.cluster_name}"
-  boot_ignition                                = "${var.boot_ignition}"
+  boot_ignition_iso                            = "${var.boot_ignition_iso}"
   master_ignition                              = "${var.master_ignition}"
   worker_ignition                              = "${var.worker_ignition}"
   public_key_path                              = "${var.public_key_path}"

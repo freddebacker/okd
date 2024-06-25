@@ -34,7 +34,7 @@ variable "master_ignition" {}
 
 variable "worker_ignition" {}
 
-variable "boot_ignition" {}
+variable "boot_ignition_iso" {}
 
 variable "allow_ssh_from_v4" {
   type = list(string)

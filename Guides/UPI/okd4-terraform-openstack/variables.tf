@@ -2,7 +2,7 @@ variable "cluster_name" {
   default = "example"
 }
 
-variable "boot_ignition" {
+variable "boot_ignition_iso" {
   default = "{}"
 }
 variable "master_ignition" {

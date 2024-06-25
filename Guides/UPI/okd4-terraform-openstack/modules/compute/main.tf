@@ -84,6 +84,65 @@ resource "openstack_networking_secgroup_rule_v2" "k8s-rule4" {
   remote_group_id   = openstack_networking_secgroup_v2.k8s.id
 }
 
+data "openstack_networking_network_v2" "network" {
+  count = var.use_octavia ? 1 : 0
+  name  = var.network_name
+}
+
+data "openstack_networking_subnet_ids_v2" "subnets" {
+  count      = var.use_octavia ? 1 : 0
+  network_id = data.openstack_networking_network_v2.network[0].id
+}
+
+data "openstack_networking_subnet_v2" "subnet" {
+  for_each  = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets[0].ids) : toset([])
+  subnet_id = each.value
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule5" {
+  for_each          = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets[0].ids) : toset([])
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "tcp"
+  port_range_min    = 6443
+  port_range_max    = 6443
+  remote_ip_prefix  = data.openstack_networking_subnet_v2.subnet[each.value].cidr
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule6" {
+  for_each          = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets[0].ids) : toset([])
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "tcp"
+  port_range_min    = 22623
+  port_range_max    = 22623
+  remote_ip_prefix  = data.openstack_networking_subnet_v2.subnet[each.value].cidr
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule7" {
+  for_each          = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets[0].ids) : toset([])
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "tcp"
+  port_range_min    = 80
+  port_range_max    = 80
+  remote_ip_prefix  = data.openstack_networking_subnet_v2.subnet[each.value].cidr
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s-rule8" {
+  for_each          = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets[0].ids) : toset([])
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s.id
+  protocol          = "tcp"
+  port_range_min    = 443
+  port_range_max    = 443
+  remote_ip_prefix  = data.openstack_networking_subnet_v2.subnet[each.value].cidr
+}
+
 resource "openstack_networking_secgroup_v2" "ssh" {
   name        = "${var.cluster_name}-ssh"
   description = "${var.cluster_name} - SSH access"
@@ -132,15 +191,49 @@ resource "openstack_dns_recordset_v2" "lb_instance" {
   type        = "A"
   records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
+
+resource "openstack_images_image_v2" "k8s_boot_ignition_iso" {
+  count            = var.number_of_boot > 0 ? 1 : 0
+  name             = basename(var.boot_ignition_iso)
+  local_file_path  = pathexpand(var.boot_ignition_iso)
+  container_format = "bare"
+  disk_format      = "raw"
+}
+
+data "openstack_images_image_v2" "k8s_boot_image" {
+  count       = var.number_of_boot > 0 ? 1 : 0
+  name        = var.image
+  most_recent = true
+}
+
 resource "openstack_compute_instance_v2" "k8s_boot" {
   name       = "boot-${var.cluster_name}.${var.domain_name}"
   count      = var.number_of_boot
-  image_name = var.image
   flavor_id  = var.flavor_lb
+
+  block_device {
+    uuid                  = data.openstack_images_image_v2.k8s_boot_image[0].id
+    source_type           = "image"
+    destination_type      = "volume"
+    volume_size           = 60
+    delete_on_termination = true
+    boot_index            = 0
+  }
+
+  block_device {
+    uuid                  = openstack_images_image_v2.k8s_boot_ignition_iso[0].id
+    source_type           = "image"
+    destination_type      = "volume"
+    volume_size           = 1
+    delete_on_termination = true
+    device_type           = "cdrom"
+    disk_bus              = "ide"
+    boot_index            = 1
+  }
+
   network {
     name = var.network_name
   }
-  user_data = file("${var.boot_ignition}")
   security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
     openstack_networking_secgroup_v2.k8s.name,
     openstack_networking_secgroup_v2.ssh.name,
@@ -279,10 +372,14 @@ data "openstack_networking_network_v2" "lb_network" {
 resource "openstack_lb_loadbalancer_v2" "lb_1" {
   count              = var.use_octavia ? 1 : 0
   vip_network_id     = data.openstack_networking_network_v2.lb_network[0].id
-  security_group_ids = [openstack_networking_secgroup_v2.lb_in.id]
+  security_group_ids = [openstack_networking_secgroup_v2.k8s_master.id,
+    openstack_networking_secgroup_v2.k8s.id,
+    openstack_networking_secgroup_v2.lb_in.id,
+  ]
 }
 
 resource "openstack_lb_pool_v2" "pool_1" {
+  name            = "pool :6443"
   count           = var.use_octavia ? 1 : 0
   protocol        = "TCP"
   lb_method       = "ROUND_ROBIN"
@@ -322,6 +419,7 @@ resource "openstack_lb_listener_v2" "listener_1" {
 }
 
 resource "openstack_lb_pool_v2" "pool_2" {
+  name            = "pool :22623"
   count           = var.use_octavia ? 1 : 0
   protocol        = "TCP"
   lb_method       = "ROUND_ROBIN"
@@ -340,6 +438,7 @@ resource "openstack_lb_member_v2" "pool_2_members_2" {
   pool_id       = openstack_lb_pool_v2.pool_2[0].id
   address       = element(openstack_compute_instance_v2.k8s_boot.*.access_ip_v4,count.index)
   protocol_port = 22623
+  backup        = true
 }
 
 resource "openstack_lb_monitor_v2" "monitor_2" {
@@ -360,6 +459,7 @@ resource "openstack_lb_listener_v2" "listener_2" {
 }
 
 resource "openstack_lb_pool_v2" "pool_3" {
+  name            = "pool :80"
   count           = var.use_octavia ? 1 : 0
   protocol        = "TCP"
   lb_method       = "SOURCE_IP"
@@ -395,6 +495,7 @@ resource "openstack_lb_listener_v2" "listener_3" {
 }
 
 resource "openstack_lb_pool_v2" "pool_4" {
+  name            = "pool :443"
   count           = var.use_octavia ? 1 : 0
   protocol        = "TCP"
   lb_method       = "SOURCE_IP"
