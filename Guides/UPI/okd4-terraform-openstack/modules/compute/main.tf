@@ -1,3 +1,7 @@
+data "openstack_networking_network_v2" "network" {
+  name  = var.network_name
+}
+
 resource "openstack_compute_keypair_v2" "k8s" {
   name       = "kubernetes-${var.cluster_name}"
   public_key = chomp(file(var.public_key_path))
@@ -84,14 +88,9 @@ resource "openstack_networking_secgroup_rule_v2" "k8s-rule4" {
   remote_group_id   = openstack_networking_secgroup_v2.k8s.id
 }
 
-data "openstack_networking_network_v2" "network" {
-  count = var.use_octavia ? 1 : 0
-  name  = var.network_name
-}
-
 data "openstack_networking_subnet_ids_v2" "subnets" {
   count      = var.use_octavia ? 1 : 0
-  network_id = data.openstack_networking_network_v2.network[0].id
+  network_id = data.openstack_networking_network_v2.network.id
 }
 
 data "openstack_networking_subnet_v2" "subnet" {
@@ -210,6 +209,7 @@ resource "openstack_compute_instance_v2" "k8s_boot" {
   name       = "boot-${var.cluster_name}.${var.domain_name}"
   count      = var.number_of_boot
   flavor_id  = var.flavor_lb
+  image_name = var.image
 
   block_device {
     uuid                  = data.openstack_images_image_v2.k8s_boot_image[0].id
@@ -254,14 +254,44 @@ resource "openstack_dns_recordset_v2" "boot_instance" {
   records     = [element(openstack_compute_instance_v2.k8s_boot.*.access_ip_v4,count.index)]
 }
 
+data "openstack_images_image_v2" "k8s_master_image" {
+  count       = var.number_of_masters > 0 ? 1 : 0
+  name        = var.image
+  most_recent = true
+}
+
+resource "openstack_networking_port_v2" "k8s_master_instanceport" {
+  name       = "master-${count.index+1}-${var.cluster_name}.${var.domain_name}"
+  count      = var.number_of_masters
+  network_id     = data.openstack_networking_network_v2.network.id
+  admin_state_up = "true"
+  allowed_address_pairs {
+    ip_address = "0.0.0.0/0"
+  }
+
+  security_group_ids = [openstack_networking_secgroup_v2.k8s_master.id,
+    openstack_networking_secgroup_v2.k8s.id,
+    openstack_networking_secgroup_v2.ssh.id,
+  ]
+}
+
 resource "openstack_compute_instance_v2" "k8s_master" {
   name       = "master-${count.index+1}-${var.cluster_name}.${var.domain_name}"
   count      = var.number_of_masters
-  image_name = var.image
   flavor_id  = var.flavor_master
 
+  block_device {
+    uuid                  = data.openstack_images_image_v2.k8s_master_image[0].id
+    source_type           = "image"
+    destination_type      = "volume"
+    volume_size           = 60
+    delete_on_termination = true
+    boot_index            = 0
+  }
+
   network {
-    name = var.network_name
+    port           = openstack_networking_port_v2.k8s_master_instanceport[count.index].id
+    access_network = "true"
   }
 
   security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
@@ -323,15 +353,43 @@ resource "openstack_dns_recordset_v2" "etcd_srv" {
   records     = formatlist("0 10 2380 etcd-%s-${var.cluster_name}.${var.domain_name}.",range(1,"${var.number_of_masters}"+1))
 }
 
+data "openstack_images_image_v2" "k8s_worker_image" {
+  count       = var.number_of_workers > 0 ? 1 : 0
+  name        = var.image
+  most_recent = true
+}
+
+resource "openstack_networking_port_v2" "k8s_worker_instanceport" {
+  name       = "worker-${count.index+1}-${var.cluster_name}.${var.domain_name}"
+  count      = var.number_of_workers
+  network_id     = data.openstack_networking_network_v2.network.id
+  admin_state_up = "true"
+  allowed_address_pairs {
+    ip_address = "0.0.0.0/0"
+  }
+
+  security_group_ids = [openstack_networking_secgroup_v2.k8s.id,
+    openstack_networking_secgroup_v2.ssh.id,
+  ]
+}
 
 resource "openstack_compute_instance_v2" "k8s_worker" {
   name       = "worker-${count.index+1}-${var.cluster_name}.${var.domain_name}"
   count      = var.number_of_workers
-  image_name = var.image
   flavor_id  = var.flavor_worker
 
+  block_device {
+    uuid                  = data.openstack_images_image_v2.k8s_worker_image[0].id
+    source_type           = "image"
+    destination_type      = "volume"
+    volume_size           = 60
+    delete_on_termination = true
+    boot_index            = 0
+  }
+
   network {
-    name = var.network_name
+    port           = openstack_networking_port_v2.k8s_worker_instanceport[count.index].id
+    access_network = "true"
   }
 
   security_groups = [openstack_networking_secgroup_v2.k8s.name,
@@ -364,14 +422,9 @@ resource "openstack_dns_recordset_v2" "apps" {
   records     = var.use_octavia ? [openstack_lb_loadbalancer_v2.lb_1[0].vip_address] : [openstack_compute_instance_v2.k8s_lb[0].access_ip_v4]
 }
 
-data "openstack_networking_network_v2" "lb_network" {
-  count = var.use_octavia ? 1 : 0
-  name  = var.network_name
-}
-
 resource "openstack_lb_loadbalancer_v2" "lb_1" {
   count              = var.use_octavia ? 1 : 0
-  vip_network_id     = data.openstack_networking_network_v2.lb_network[0].id
+  vip_network_id     = data.openstack_networking_network_v2.network.id
   security_group_ids = [openstack_networking_secgroup_v2.k8s_master.id,
     openstack_networking_secgroup_v2.k8s.id,
     openstack_networking_secgroup_v2.lb_in.id,
