@@ -59,6 +59,25 @@ resource "openstack_networking_secgroup_rule_v2" "lb_in-rule2" {
   remote_ip_prefix  = strcontains(data.openstack_networking_subnet_v2.subnet[each.value].cidr, ":") ? "::/0" : "0.0.0.0/0"
 }
 
+resource "openstack_networking_secgroup_v2" "k8s_worker" {
+  name        = "${var.cluster_name}-worker"
+  description = "${var.cluster_name} - Kubernetes Worker"
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s_worker-rule1" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  security_group_id = openstack_networking_secgroup_v2.k8s_worker.id
+  remote_ip_prefix  = "0.0.0.0/0"
+}
+
+resource "openstack_networking_secgroup_rule_v2" "k8s_worker-rule2" {
+  direction         = "ingress"
+  ethertype         = "IPv6"
+  security_group_id = openstack_networking_secgroup_v2.k8s_worker.id
+  remote_ip_prefix  = "::/0"
+}
+
 resource "openstack_networking_secgroup_v2" "k8s" {
   name        = "${var.cluster_name}-inter-cluster"
   description = "${var.cluster_name} - Kubernetes"
@@ -274,6 +293,9 @@ resource "openstack_networking_port_v2" "k8s_master_instanceport" {
   allowed_address_pairs {
     ip_address = "0.0.0.0/0"
   }
+  allowed_address_pairs {
+    ip_address = "::/0"
+  }
 
   security_group_ids = [openstack_networking_secgroup_v2.k8s_master.id,
     openstack_networking_secgroup_v2.k8s.id,
@@ -300,11 +322,6 @@ resource "openstack_compute_instance_v2" "k8s_master" {
     access_network = "true"
   }
 
-  security_groups = [openstack_networking_secgroup_v2.k8s_master.name,
-    openstack_networking_secgroup_v2.k8s.name,
-    openstack_networking_secgroup_v2.ssh.name,
-    "default",
-  ]
   user_data = file("${var.master_ignition}")
   metadata = {
     role             = "master"
@@ -375,8 +392,12 @@ resource "openstack_networking_port_v2" "k8s_worker_instanceport" {
   allowed_address_pairs {
     ip_address = "0.0.0.0/0"
   }
+  allowed_address_pairs {
+    ip_address = "::/0"
+  }
 
-  security_group_ids = [openstack_networking_secgroup_v2.k8s.id,
+  security_group_ids = [openstack_networking_secgroup_v2.k8s_worker.id,
+    openstack_networking_secgroup_v2.k8s.id,
     openstack_networking_secgroup_v2.ssh.id,
   ]
 }
@@ -400,10 +421,6 @@ resource "openstack_compute_instance_v2" "k8s_worker" {
     access_network = "true"
   }
 
-  security_groups = [openstack_networking_secgroup_v2.k8s.name,
-    openstack_networking_secgroup_v2.ssh.name,
-    "default",
-  ]
   user_data = file("${var.worker_ignition}")
   metadata = {
     role             = "worker"
