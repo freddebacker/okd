@@ -14,14 +14,14 @@ variable "worker_ignition" {
 }
 
 variable "public_key_path" {
-  default     = "~/.ssh/id_rsa.pub"
+  default = "~/.ssh/id_rsa.pub"
 }
 
 variable "ssh_user" {
   default = "centos"
 }
 
-variable "dns_zone_id" {
+variable "designate_dns_zone_id" {
   default = ""
 }
 
@@ -38,11 +38,11 @@ variable "number_of_workers" {
 }
 
 variable "master_volume_size" {
-  default = 20
+  default = 100
 }
 
 variable "node_volume_size" {
-  default = 20
+  default = 100
 }
 
 variable "image_lb" {
@@ -80,11 +80,36 @@ variable "domain_name" {
 }
 
 variable "allow_ssh_from_v4" {
-  type = list(string)
+  type    = list(string)
   default = []
 }
 
 variable "use_octavia" {
   type    = bool
   default = false
+}
+
+variable "use_designate" {
+  type    = bool
+  default = true
+}
+
+variable "dns_server" {
+  type    = string
+  default = ""
+}
+
+variable "dns_key_name" {
+  type    = string
+  default = ""
+}
+
+variable "dns_key_secret" {
+  type    = string
+  default = ""
+}
+
+variable "dns_key_alg" {
+  type    = string
+  default = ""
 }
