@@ -667,6 +667,7 @@ resource "openstack_lb_pool_v2" "pool_1" {
 
 resource "openstack_lb_member_v2" "pool_1_members_1" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_masters : 0
+  name          = "master-${(count.index % var.number_of_masters) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_1[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_masters))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_masters))) ? trim(openstack_compute_instance_v2.k8s_master[count.index % var.number_of_masters].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_master[count.index % var.number_of_masters].access_ip_v4
   protocol_port = 6443
@@ -674,29 +675,36 @@ resource "openstack_lb_member_v2" "pool_1_members_1" {
 
 resource "openstack_lb_member_v2" "pool_1_members_2" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_boot : 0
+  name          = "boot-${(count.index % var.number_of_boot) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_1[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_boot))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_boot))) ? trim(openstack_compute_instance_v2.k8s_boot[count.index % var.number_of_boot].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_boot[count.index % var.number_of_boot].access_ip_v4
   protocol_port = 6443
+  backup        = true
 }
 
 resource "openstack_lb_monitor_v2" "monitor_1" {
-  for_each    = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name        = "monitor :6443"
-  pool_id     = openstack_lb_pool_v2.pool_1[each.value].id
-  type        = "HTTPS"
-  url_path    = "/readyz"
-  delay       = 10
-  timeout     = 9
-  max_retries = 3
+  for_each         = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name             = "monitor :6443"
+  pool_id          = openstack_lb_pool_v2.pool_1[each.value].id
+  type             = "HTTPS"
+  url_path         = "/readyz"
+  delay            = 10
+  timeout          = 10
+  max_retries      = 3
+  max_retries_down = 2
 }
 
 resource "openstack_lb_listener_v2" "listener_1" {
-  for_each        = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name            = "listener :6443"
-  protocol        = "TCP"
-  protocol_port   = 6443
-  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[each.value].id
-  default_pool_id = openstack_lb_pool_v2.pool_1[each.value].id
+  for_each               = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name                   = "listener :6443"
+  protocol               = "TCP"
+  protocol_port          = 6443
+  timeout_member_connect = 10000
+  timeout_client_data    = 60000
+  timeout_member_data    = 60000
+  connection_limit       = 3000
+  loadbalancer_id        = openstack_lb_loadbalancer_v2.lb_1[each.value].id
+  default_pool_id        = openstack_lb_pool_v2.pool_1[each.value].id
 }
 
 resource "openstack_lb_pool_v2" "pool_2" {
@@ -709,6 +717,7 @@ resource "openstack_lb_pool_v2" "pool_2" {
 
 resource "openstack_lb_member_v2" "pool_2_members_1" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_masters : 0
+  name          = "master-${(count.index % var.number_of_masters) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_2[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_masters))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_masters))) ? trim(openstack_compute_instance_v2.k8s_master[count.index % var.number_of_masters].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_master[count.index % var.number_of_masters].access_ip_v4
   protocol_port = 22623
@@ -716,6 +725,7 @@ resource "openstack_lb_member_v2" "pool_2_members_1" {
 
 resource "openstack_lb_member_v2" "pool_2_members_2" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_boot : 0
+  name          = "boot-${(count.index % var.number_of_boot) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_2[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_boot))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_boot))) ? trim(openstack_compute_instance_v2.k8s_boot[count.index % var.number_of_boot].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_boot[count.index % var.number_of_boot].access_ip_v4
   protocol_port = 22623
@@ -723,22 +733,27 @@ resource "openstack_lb_member_v2" "pool_2_members_2" {
 }
 
 resource "openstack_lb_monitor_v2" "monitor_2" {
-  for_each    = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name        = "monitor :22623"
-  pool_id     = openstack_lb_pool_v2.pool_2[each.value].id
-  type        = "TCP"
-  delay       = 10
-  timeout     = 9
-  max_retries = 3
+  for_each         = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name             = "monitor :22623"
+  pool_id          = openstack_lb_pool_v2.pool_2[each.value].id
+  type             = "TCP"
+  delay            = 1
+  timeout          = 10
+  max_retries      = 1
+  max_retries_down = 1
 }
 
 resource "openstack_lb_listener_v2" "listener_2" {
-  for_each        = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name            = "listener :22623"
-  protocol        = "TCP"
-  protocol_port   = 22623
-  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[each.value].id
-  default_pool_id = openstack_lb_pool_v2.pool_2[each.value].id
+  for_each               = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name                   = "listener :22623"
+  protocol               = "TCP"
+  protocol_port          = 22623
+  timeout_member_connect = 10000
+  timeout_client_data    = 60000
+  timeout_member_data    = 60000
+  connection_limit       = 3000
+  loadbalancer_id        = openstack_lb_loadbalancer_v2.lb_1[each.value].id
+  default_pool_id        = openstack_lb_pool_v2.pool_2[each.value].id
 }
 
 resource "openstack_lb_pool_v2" "pool_3" {
@@ -755,28 +770,34 @@ resource "openstack_lb_pool_v2" "pool_3" {
 
 resource "openstack_lb_member_v2" "pool_3_members_1" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_workers : 0
+  name          = "worker-${(count.index % var.number_of_workers) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_3[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_workers))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_workers))) ? trim(openstack_compute_instance_v2.k8s_worker[count.index % var.number_of_workers].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_worker[count.index % var.number_of_workers].access_ip_v4
   protocol_port = 80
 }
 
 resource "openstack_lb_monitor_v2" "monitor_3" {
-  for_each    = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name        = "monitor :80"
-  pool_id     = openstack_lb_pool_v2.pool_3[each.value].id
-  type        = "TCP"
-  delay       = 10
-  timeout     = 9
-  max_retries = 3
+  for_each         = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name             = "monitor :80"
+  pool_id          = openstack_lb_pool_v2.pool_3[each.value].id
+  type             = "TCP"
+  delay            = 1
+  timeout          = 10
+  max_retries      = 1
+  max_retries_down = 1
 }
 
 resource "openstack_lb_listener_v2" "listener_3" {
-  for_each        = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name            = "listener :80"
-  protocol        = "TCP"
-  protocol_port   = 80
-  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[each.value].id
-  default_pool_id = openstack_lb_pool_v2.pool_3[each.value].id
+  for_each               = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name                   = "listener :80"
+  protocol               = "TCP"
+  protocol_port          = 80
+  timeout_member_connect = 10000
+  timeout_client_data    = 60000
+  timeout_member_data    = 60000
+  connection_limit       = 3000
+  loadbalancer_id        = openstack_lb_loadbalancer_v2.lb_1[each.value].id
+  default_pool_id        = openstack_lb_pool_v2.pool_3[each.value].id
 }
 
 resource "openstack_lb_pool_v2" "pool_4" {
@@ -793,26 +814,32 @@ resource "openstack_lb_pool_v2" "pool_4" {
 
 resource "openstack_lb_member_v2" "pool_4_members_1" {
   count         = var.use_octavia ? length(data.openstack_networking_subnet_ids_v2.subnets.ids) * var.number_of_workers : 0
+  name          = "worker-${(count.index % var.number_of_workers) + 1}.${var.cluster_name}.${var.domain_name}"
   pool_id       = openstack_lb_pool_v2.pool_4[element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_workers))].id
   address       = contains(local.ipv6subnet_ids, element(data.openstack_networking_subnet_ids_v2.subnets.ids, floor(count.index / var.number_of_workers))) ? trim(openstack_compute_instance_v2.k8s_worker[count.index % var.number_of_workers].access_ip_v6, "[]") : openstack_compute_instance_v2.k8s_worker[count.index % var.number_of_workers].access_ip_v4
   protocol_port = 443
 }
 
 resource "openstack_lb_monitor_v2" "monitor_4" {
-  for_each    = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name        = "monitor :443"
-  pool_id     = openstack_lb_pool_v2.pool_4[each.value].id
-  type        = "TCP"
-  delay       = 10
-  timeout     = 9
-  max_retries = 3
+  for_each         = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name             = "monitor :443"
+  pool_id          = openstack_lb_pool_v2.pool_4[each.value].id
+  type             = "TCP"
+  delay            = 1
+  timeout          = 10
+  max_retries      = 1
+  max_retries_down = 1
 }
 
 resource "openstack_lb_listener_v2" "listener_4" {
-  for_each        = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
-  name            = "listener :443"
-  protocol        = "TCP"
-  protocol_port   = 443
-  loadbalancer_id = openstack_lb_loadbalancer_v2.lb_1[each.value].id
-  default_pool_id = openstack_lb_pool_v2.pool_4[each.value].id
+  for_each               = var.use_octavia ? toset(data.openstack_networking_subnet_ids_v2.subnets.ids) : toset([])
+  name                   = "listener :443"
+  protocol               = "TCP"
+  protocol_port          = 443
+  timeout_member_connect = 10000
+  timeout_client_data    = 60000
+  timeout_member_data    = 60000
+  connection_limit       = 3000
+  loadbalancer_id        = openstack_lb_loadbalancer_v2.lb_1[each.value].id
+  default_pool_id        = openstack_lb_pool_v2.pool_4[each.value].id
 }
